@@ -1,4 +1,8 @@
-use std::{fs::File, fs::ReadDir, path::Path, path::PathBuf};
+#![allow(dead_code)]
+use std::{
+    io,
+    path::PathBuf,
+};
 
 use binread::{io::Cursor, BinRead};
 
@@ -8,7 +12,7 @@ mod rdb;
 use rdb::Rdb;
 
 mod ktid;
-use ktid::{KTID, ktid};
+use ktid::ktid;
 
 mod typeinfo;
 
@@ -38,7 +42,11 @@ struct Patch {
     pub path: PathBuf,
     #[structopt(parse(from_os_str), help = "Output path to the RDB file")]
     pub out_path: PathBuf,
-    #[structopt(parse(from_os_str), default_value = "patch", help = "Directory where the files to patch are located")]
+    #[structopt(
+        parse(from_os_str),
+        default_value = "patch",
+        help = "Directory where the files to patch are located"
+    )]
     pub data_path: PathBuf,
 }
 
@@ -54,9 +62,12 @@ fn patch_rdb(args: &Patch) -> Result<(), String> {
     let mut rdb = Rdb::open(&args.path).unwrap();
 
     let external_path = if args.data_path.is_relative() {
-
         let rdb_dir = if args.path.is_relative() {
-            std::fs::canonicalize(&args.path).unwrap().parent().unwrap().to_path_buf()
+            std::fs::canonicalize(&args.path)
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf()
         } else {
             args.path.parent().unwrap().to_path_buf()
         };
@@ -67,12 +78,20 @@ fn patch_rdb(args: &Patch) -> Result<(), String> {
     };
 
     if !external_path.exists() {
-        return Err(format!("Couldn't find a directory to patch ('{}' was used). Consider making it?", external_path.display()));
+        return Err(format!(
+            "Couldn't find a directory to patch ('{}' was used). Consider making it?",
+            external_path.display()
+        ));
     }
 
     let files = match std::fs::read_dir(external_path) {
         Ok(files) => files,
-        Err(_) => return Err("How did you even managed to delete the directory this fast? Stop that.".to_string()),
+        Err(_) => {
+            return Err(
+                "How did you even managed to delete the directory this fast? Stop that."
+                    .to_string(),
+            )
+        }
     };
 
     for entry in files {
@@ -87,12 +106,18 @@ fn patch_rdb(args: &Patch) -> Result<(), String> {
         let path = &entry.path();
 
         // Check if we're dealing with a KTID or an actual filename
-        let filename = if path.file_name().unwrap().to_str().unwrap().starts_with("0x") {
+        let filename = if path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("0x")
+        {
             // Strip the extension (Cethleann keeps the extension even if the hash is missing)
-            path.file_stem().unwrap().to_str().unwrap()
+            path.file_stem().and_then(|x| x.to_str()).expect("Invalid file_stem")
         } else {
             // Get the full filename with extension
-            path.file_name().unwrap().to_str().unwrap()
+            path.file_name().and_then(|x| x.to_str()).expect("Invalid file_name")
         };
 
         match rdb.get_entry_by_ktid_mut(crate::ktid(filename)) {
@@ -100,8 +125,8 @@ fn patch_rdb(args: &Patch) -> Result<(), String> {
                 println!("Patching {}", filename);
                 entry_found.make_external();
                 entry_found.make_uncompressed();
-                entry_found.set_external_file(&entry.path());
-            },
+                entry_found.set_external_file(&entry.path()).expect("Failed to set external file");
+            }
             None => println!("File {} not found in the RDB. Skipping.", filename),
         }
     }
@@ -114,25 +139,32 @@ fn patch_rdb(args: &Patch) -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
-    let opt = Opt::from_args_safe().unwrap_or_else(|err| {
-        println!("{}", err);
-        std::process::exit(1);
-    });
-
-    match opt.cmd {
-        Command::Patch(args) => {
-            if let Err(error_msg) = patch_rdb(&args) {
-                println!("{}", error_msg);
+fn main() -> io::Result<()> {
+    match Opt::from_args_safe() {
+        Ok(opt) => match opt.cmd {
+            Command::Patch(args) => {
+                if let Err(error_msg) = patch_rdb(&args) {
+                    println!("{}", error_msg);
+                }
+            }
+            Command::Print(args) => {
+                let ktid = ktid(&args.ktid);
+                let rdb = Rdb::read(&mut Cursor::new(&std::fs::read(&args.path)?))
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                if let Some(entry) = rdb.get_entry_by_ktid(&ktid) {
+                    println!("{:#?}", entry);
+                } else {
+                    println!("KTID {:?} not found in the RDB.", &ktid);
+                }
             }
         },
-        Command::Print(args) => {
-            let ktid = ktid(&args.ktid);
-            let rdb = Rdb::read(&mut Cursor::new(&std::fs::read(&args.path).unwrap())).unwrap();
-            let entry = rdb.get_entry_by_ktid(ktid).unwrap();
-            println!("{:#?}", entry);
-        },
+        Err(e) => {
+            println!("{}", e.message);
+        }
     }
+
+
+    Ok(())
 }
 
 mod tests {
@@ -158,29 +190,54 @@ mod tests {
 
     #[test]
     fn generate_typeinfos_lmao_gross() {
-        let mut rdr = csv::ReaderBuilder::new().has_headers(false).from_path("typeinfos.csv").unwrap();
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_path("typeinfos.csv")
+            .unwrap();
 
-        let typeinfos: Vec<String> = rdr.deserialize().into_iter().filter_map(|result| {
-            let record: TypeInfoEntry = result.unwrap();
+        let typeinfos: Vec<String> = rdr
+            .deserialize()
+            .into_iter()
+            .filter_map(|result| {
+                let record: TypeInfoEntry = result.unwrap();
 
-            //dbg!(record);
-            if record.typekind == "TypeInfo" {
-                Some(record.typename)
-            } else {
-                None
-            }
-        }).collect();
+                //dbg!(record);
+                if record.typekind == "TypeInfo" {
+                    Some(record.typename)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         for typeinfo in &typeinfos {
-            let mut path = PathBuf::from(format!(".\\src\\{}", &typeinfo.replace("::", "\\")).to_lowercase());
+            let mut path =
+                PathBuf::from(format!(".\\src\\{}", &typeinfo.replace("::", "\\")).to_lowercase());
             std::fs::create_dir_all(&path).unwrap();
-            
+
             let mut mod_path = path.join("mod.rs");
 
             if !mod_path.exists() {
-                let mut file = std::fs::OpenOptions::new().create(true).write(true).open(&dbg!(&mod_path)).unwrap();
-                let stem = mod_path.parent().unwrap().file_stem().unwrap().to_str().unwrap();
-                file.write_all(format!("use crate::ktid::KTID;\n\npub const ID: KTID = KTID({});", crate::ktid::ktid(&typeinfo).as_u32()).as_bytes()).unwrap();
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open(&dbg!(&mod_path))
+                    .unwrap();
+                let stem = mod_path
+                    .parent()
+                    .unwrap()
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap();
+                file.write_all(
+                    format!(
+                        "use crate::ktid::KTID;\n\npub const ID: KTID = KTID({});",
+                        crate::ktid::ktid(&typeinfo).as_u32()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
             }
         }
 
@@ -188,30 +245,36 @@ mod tests {
             let mut path = PathBuf::from(format!(".\\src\\{}", &typeinfo.replace("::", "\\")));
 
             path.ancestors().for_each(|ancestor| {
-                let dirs: Vec<String> = std::fs::read_dir(ancestor).unwrap().filter_map(|dir| {
-                    let dir = dir.unwrap();
-                    if dir.path().is_dir() {
-                        Some(dir.file_name().to_str().unwrap().to_string())
-                    } else {
-                        None
-                    }
-                }).collect();
+                let dirs: Vec<String> = std::fs::read_dir(ancestor)
+                    .unwrap()
+                    .filter_map(|dir| {
+                        let dir = dir.unwrap();
+                        if dir.path().is_dir() {
+                            Some(dir.file_name().to_str().unwrap().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
                 let mod_path = ancestor.join("mod.rs");
 
                 if !mod_path.exists() {
                     let mut output = String::new();
 
-                for dir in dirs {
-                    output.push_str(&format!("pub mod {};\n", dir));
-                }
+                    for dir in dirs {
+                        output.push_str(&format!("pub mod {};\n", dir));
+                    }
 
-                std::fs::write(&mod_path, &output);
+                    std::fs::write(&mod_path, &output);
                 }
             });
         }
 
-        println!("{:x}", ktid::ktid("TypeInfo::Object::3D::Displayset::TrianglesEx").as_u32())
+        println!(
+            "{:x}",
+            ktid::ktid("TypeInfo::Object::3D::Displayset::TrianglesEx").as_u32()
+        )
     }
 
     // #[test]
@@ -225,7 +288,7 @@ mod tests {
     #[test]
     fn patch_texternal() {
         //let mut rdb: Rdb = Rdb::read(&mut Cursor::new(TEST_CONTENTS)).unwrap();
-        patch_rdb(&Opt { path: PathBuf::from("RRPreview.rdb"), out_path: PathBuf::from("RRPreview.rdb"), data_path: PathBuf::from("data") });
+        // patch_rdb(&Opt { path: PathBuf::from("RRPreview.rdb"), out_path: PathBuf::from("RRPreview.rdb"), data_path: PathBuf::from("data") });
         //patch_rdb(Path::new("KIDSSystemResource.rdb"), Path::new("cock.rdb"));
         // let entry = rdb.get_entry_by_KTID(0x0a696242).unwrap();
         // entry.patch_external_file();

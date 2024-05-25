@@ -11,6 +11,7 @@ impl KTID {
     }
 
     /// The argument is treated as a path, meaning you need to provide the filename and extension like a regular path.
+    #[allow(dead_code)]
     pub fn new<P: AsRef<Path>>(name: P) -> Self {
         KTID::from(name.as_ref())
     }
@@ -42,17 +43,16 @@ impl From<&Path> for KTID {
         // Huehuehue
         buffer.extend_from_slice(
             path.extension()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_uppercase()
-                .as_bytes(),
+                .and_then(|ext| ext.to_str())
+                .map(|s| s.as_bytes())
+                .expect(&format!("Invalid extension: \"{:?}\"", path.extension()))
         );
         buffer.extend_from_slice("［".as_bytes());
-        buffer.extend_from_slice(path.file_stem().unwrap().to_str().unwrap().as_bytes());
+        // buffer.extend_from_slice(path.file_stem().unwrap().to_str().unwrap().as_bytes());
+        buffer.extend_from_slice(path.file_stem().and_then(|x| x.to_str()).and_then(|s| Some(s.as_bytes())).expect("Invalid file_stem"));
         buffer.extend_from_slice("］".as_bytes());
 
-        ktid(&String::from_utf8(buffer).unwrap())
+        ktid(&String::from_utf8(buffer).expect(&format!("Invalid path: {:?}", path)))
     }
 }
 
@@ -64,7 +64,7 @@ impl fmt::Display for KTID {
 
 pub fn ktid(string: &str) -> KTID {
     if string.starts_with("0x") {
-        KTID(u32::from_str_radix(string.trim_start_matches("0x"), 16).unwrap())
+        KTID(u32::from_str_radix(string.trim_start_matches("0x"), 16).expect("Invalid KTID"))
 
     } else {
         KTID(ktid_hash(string, 31))
