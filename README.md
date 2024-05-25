@@ -15,8 +15,10 @@ AOC_mods_merger.exe <mods_directory>
 ```
 If no `mods_directory` argument is provided then merger will try to work in current directory.
 
-6. If command succeeds, new folder should be created - `000_AOC_MERGED_MODS`
-7. Run the game and test if everything works
+6. The window should pop up asking for AOC romfs dump directory, select it and press OK (needs to be done only once).
+7. If the program is run for the first time it will cache some AOC info from user's dump - it will take less than 10s and will be performed only once.
+8. If command succeeds, new folder should be created - `000_AOC_MERGED_MODS`
+9. Run the game and test if everything works
 
 # Credits
 
