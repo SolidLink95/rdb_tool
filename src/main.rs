@@ -1,15 +1,19 @@
 #![allow(dead_code)]
-#![allow(non_snake_case,non_camel_case_types)]
+#![allow(non_snake_case, non_camel_case_types)]
 use binread::{io::Cursor, BinRead};
 use binwrite::BinWrite;
-use std::{collections::HashMap, io, path::PathBuf};
-mod rdb;
+mod ModMerger;
+
+use std::{env, io, path::PathBuf};
 mod AocConfig;
+mod rdb;
 use rdb::Rdb;
 mod ktid;
 use ktid::ktid;
 mod typeinfo;
 use structopt::StructOpt;
+
+use crate::AocConfig::normalize_path;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -52,22 +56,30 @@ struct Print {
 }
 
 fn patch_rdb(args: &Patch) -> io::Result<()> {
-    let mut rdb = Rdb::open(&args.path).expect(&format!("Failed to open RDB file: {:?}", args.path));
+    let mut rdb =
+        Rdb::open(&args.path).expect(&format!("Failed to open RDB file: {:?}", args.path));
 
     let external_path = if args.data_path.is_relative() {
         let rdb_dir = if args.path.is_relative() {
-            std::fs::canonicalize(&args.path)?
+            std::fs::canonicalize(&args.path)
+                .expect("Failed to canonicalize path")
                 .parent()
                 .expect("Failed to get parent directory for RDB file")
                 .to_path_buf()
         } else {
-            args.path.parent().expect("Unable to get parent dir for RDB file").to_path_buf()
+            args.path
+                .parent()
+                .expect("Unable to get parent dir for RDB file")
+                .to_path_buf()
         };
 
         rdb_dir.join(&args.data_path)
     } else {
         args.data_path.to_path_buf()
     };
+
+    let external_path = normalize_path(external_path);
+    println!("{}: External path: {}", line!(), external_path.display());
 
     if !external_path.exists() {
         return Err(io::Error::new(
@@ -91,6 +103,7 @@ fn patch_rdb(args: &Patch) -> io::Result<()> {
 
     for entry in files {
         let entry = entry?;
+        println!("{}: entry {:?}", line!(), entry);
         let metadata = entry.metadata()?;
 
         // We don't care about subdirectories
@@ -118,15 +131,22 @@ fn patch_rdb(args: &Patch) -> io::Result<()> {
                 .and_then(|x| x.to_str())
                 .expect(&format!("Invalid file_name: {}", path.display()))
         };
+        println!("{}: filename {:?}", line!(), &filename);
+        println!("{}: entry.path() {:?}", line!(), &entry.path());
 
         match rdb.get_entry_by_ktid_mut(crate::ktid(filename)) {
             Some(entry_found) => {
                 println!("Patching {}", filename);
                 entry_found.make_external();
                 entry_found.make_uncompressed();
-                entry_found
-                    .set_external_file(&entry.path())
-                    .expect("Failed to set external file");
+                if let Ok(_) = entry_found.set_external_file(&entry.path()) {
+                    println!("{}: set_external_file success", line!());
+                } else {
+                    println!("{}: set_external_file failed", line!());
+                }
+                // entry_found
+                //     .set_external_file(&entry.path())
+                //     .expect("Failed to set external file");
             }
             None => println!("File {} not found in the RDB. Skipping.", filename),
         }
@@ -138,34 +158,44 @@ fn patch_rdb(args: &Patch) -> io::Result<()> {
     std::fs::write(&args.out_path, bytes)
 }
 
-
-
 fn main() -> io::Result<()> {
-    // get_hashes()?;
+    // let mut modmerger = ModMerger::ModMerger::new::<PathBuf>(None)?;
+
+    let argv = env::args().nth(1).unwrap_or_default(); 
+    let working_dir = if !argv.is_empty() {
+        PathBuf::from(argv)
+    } else {
+        env::current_dir()?
+    };
+    // let p = r"C:\Users\Mati\AppData\Roaming\yuzu\load\01002B00111A2000";
+    let mut modmerger = ModMerger::ModMerger::new::<PathBuf>(Some(working_dir))?;
+    modmerger.process_mods()?;
+
+
     // return Ok(());
-    AocConfig::AocConfig::safe_new();
-    match Opt::from_args_safe() {
-        Ok(opt) => match opt.cmd {
-            Command::Patch(args) => {
-                if let Err(error_msg) = patch_rdb(&args) {
-                    println!("{}", error_msg);
-                }
-            }
-            Command::Print(args) => {
-                let ktid = ktid(&args.ktid);
-                let rdb = Rdb::read(&mut Cursor::new(&std::fs::read(&args.path)?))
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                if let Some(entry) = rdb.get_entry_by_ktid(&ktid) {
-                    println!("{:#?}", entry);
-                } else {
-                    println!("KTID {:?} not found in the RDB.", &ktid);
-                }
-            }
-        },
-        Err(e) => {
-            println!("{}", e.message);
-        }
-    }
+    // AocConfig::AocConfig::safe_new();
+    // match Opt::from_args_safe() {
+    //     Ok(opt) => match opt.cmd {
+    //         Command::Patch(args) => {
+    //             if let Err(error_msg) = patch_rdb(&args) {
+    //                 println!("{}", error_msg);
+    //             }
+    //         }
+    //         Command::Print(args) => {
+    //             let ktid = ktid(&args.ktid);
+    //             let rdb = Rdb::read(&mut Cursor::new(&std::fs::read(&args.path)?))
+    //                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    //             if let Some(entry) = rdb.get_entry_by_ktid(&ktid) {
+    //                 println!("{:#?}", entry);
+    //             } else {
+    //                 println!("KTID {:?} not found in the RDB.", &ktid);
+    //             }
+    //         }
+    //     },
+    //     Err(e) => {
+    //         println!("{}", e.message);
+    //     }
+    // }
 
     Ok(())
 }

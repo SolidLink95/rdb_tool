@@ -1,7 +1,12 @@
 #![allow(dead_code)]
-use std::{fs::OpenOptions, io::{self,  Read, Seek, SeekFrom}, path::{Path, PathBuf}, str::Utf8Error};
+use std::{
+    fs::OpenOptions,
+    io::{self, Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    str::Utf8Error,
+};
 
-use binread::{BinRead, NullString, BinResult, BinReaderExt};
+use binread::{BinRead, BinReaderExt, BinResult, NullString};
 
 use binwrite::BinWrite;
 
@@ -118,17 +123,24 @@ impl RdbEntry {
 
         //let cursor : &mut std::io::Cursor<Vec<u8>> = &mut std::io::Cursor::new(Vec::new());
 
-        let mut test = OpenOptions::new().read(true).write(true).create(true).open(path)?;
-        
+        let mut test = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
+
         //let file = std::fs::read(path).unwrap();
 
-        let mut buffer = Vec::new();        
-        
-        let mut out_sig = [0;4];
+        let mut buffer = Vec::new();
+
+        let mut out_sig = [0; 4];
         test.read(&mut out_sig)?;
 
         if &out_sig == b"IDRK" {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists,"Already patched"));
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Already patched",
+            ));
         }
 
         test.seek(SeekFrom::Start(0))?;
@@ -141,7 +153,12 @@ impl RdbEntry {
             8 => 0x58,
             // G1M, most likely other model related formats
             12 => 0x68,
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unknown entry type {}", self.entry_type))),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unknown entry type {}", self.entry_type),
+                ))
+            }
         };
         self.entry_size = header_size + test.metadata()?.len() as u32;
         self.file_size = test.metadata()?.len() as _;
@@ -151,19 +168,30 @@ impl RdbEntry {
         //test.seek(SeekFrom::Start(0)).unwrap();
         self.write(&mut buffer)?;
         test.read_to_end(&mut buffer)?;
-        
+
         // let mut writer = BufWriter::new(test);
         // writer.seek(SeekFrom::Start(0)).unwrap();
 
         // self.write(&mut writer).unwrap();
         //writer.write_all(&mut reader.buffer());
         // Check if we're dealing with a KTID or an actual filename
-        let filename = if path.file_name().unwrap_or_default().to_str().unwrap_or_default().to_lowercase().starts_with("0x") {
+        let filename = if path
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .to_lowercase()
+            .starts_with("0x")
+        {
             // Strip the extension (Cethleann keeps the extension even if the hash is missing)
-            path.file_stem().and_then(|x| x.to_str()).expect("Invalid file_stem")
+            path.file_stem()
+                .and_then(|x| x.to_str())
+                .expect("Invalid file_stem")
         } else {
             // Get the full filename with extension
-            path.file_name().and_then(|x| x.to_str()).expect("Invalid file_name")
+            path.file_name()
+                .and_then(|x| x.to_str())
+                .expect("Invalid file_name")
         };
 
         let out_path = PathBuf::from(format!("./data/0x{}.file", crate::ktid(filename)));
@@ -191,7 +219,14 @@ impl Rdb {
         Self::from_reader(std::io::BufReader::new(std::fs::File::open(path)?))
     }
 
-    pub fn from_reader<R: std::io::Read + std::io::Seek + Send + 'static>(mut reader: R) -> BinResult<Self> {
+    pub fn open_io<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        Self::from_reader(std::io::BufReader::new(std::fs::File::open(path)?))
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    pub fn from_reader<R: std::io::Read + std::io::Seek + Send + 'static>(
+        mut reader: R,
+    ) -> BinResult<Self> {
         let rdb: Self = reader.read_le()?;
 
         Ok(rdb)
@@ -202,7 +237,16 @@ impl Rdb {
     }
 
     pub fn get_entry_by_ktid_mut(&mut self, ktid: crate::ktid::KTID) -> Option<&mut RdbEntry> {
-        self.entries.iter_mut().find(|x| x.file_ktid == ktid.as_u32())
+        self.entries
+            .iter_mut()
+            .find(|x| x.file_ktid == ktid.as_u32())
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let mut bytes = vec![];
+        self.write(&mut bytes)?;
+    
+        std::fs::write(&path, bytes)
     }
 }
 

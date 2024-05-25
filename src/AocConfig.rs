@@ -1,25 +1,36 @@
-#![allow(non_snake_case,non_camel_case_types)]
-use std::{collections::HashMap, env, fs, io, path::{Path, PathBuf}};
+#![allow(non_snake_case, non_camel_case_types)]
+use std::{
+    collections::HashMap,
+    env, fs, io,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::rdb::Rdb;
 
-
-
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct AocConfig {
     pub romfs: String,
     #[serde(skip)]
+    pub hashes: HashMap<String, Vec<String>>,
+    #[serde(skip)]
+    pub hashes_rev: HashMap<String, String>,
+    #[serde(skip)]
     pub config_path: String,
+    #[serde(skip)]
+    pub hashes_json_path: String,
 }
 
 impl Default for AocConfig {
     fn default() -> Self {
         Self {
             romfs: String::new(),
+            hashes: HashMap::new(),
+            hashes_rev: HashMap::new(),
             config_path: String::new(),
+            hashes_json_path: String::new(),
         }
     }
 }
@@ -40,61 +51,62 @@ impl AocConfig {
     }
     #[allow(dead_code)]
     pub fn to_json(&self) -> io::Result<serde_json::Value> {
-        Ok(
-            json!({
-                "romfs": self.romfs,
-            })
-        )
+        Ok(json!({
+            "romfs": self.romfs,
+        }))
     }
 
     pub fn to_react_json(&self) -> io::Result<serde_json::Value> {
-        Ok(
-            json!({
-                "romfs": self.romfs,
-            })
-        )
+        Ok(json!({
+            "romfs": self.romfs,
+        }))
     }
 
     pub fn new() -> io::Result<AocConfig> {
         let mut conf = Self::default();
         conf.get_config_path()?;
-    
+
         let mut err_str = String::new();
-    
+
         if let Err(err) = conf.update_default() {
             log_error(&mut err_str, err);
         }
-    
+
         if conf.try_save_config()? {
             return Ok(conf);
         }
-    
+
         if let Err(err) = conf.update_from_input() {
             log_error(&mut err_str, err);
         }
-    
+
         if conf.try_save_config()? {
             return Ok(conf);
         }
-    
+
         println!("{}", err_str);
-    
+
         if conf.romfs.is_empty() {
             let e = format!("Unable to get proper romfs path:\n{}", err_str);
             return Err(io::Error::new(io::ErrorKind::NotFound, e));
         }
-        
-        conf.save().map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Unable to save config to:\n{}\n{:?}", &conf.config_path, e)))?;
+
+        conf.save().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Unable to save config to:\n{}\n{:?}", &conf.config_path, e),
+            )
+        })?;
         Ok(conf)
     }
     pub fn get_config_path(&mut self) -> io::Result<()> {
-        let appdata = env::var("LOCALAPPDATA").map_err(|_| io::Error::new(io::ErrorKind::NotFound, "Cannot access appdata"))?;
+        let appdata = env::var("LOCALAPPDATA")
+            .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "Cannot access appdata"))?;
         let mut conf_path = PathBuf::from(&appdata);
-        // conf_path.push("Totkbits/config.json");
         conf_path.push("AgeOfCalamity/config.toml");
         makedirs(&conf_path)?;
         self.config_path = conf_path.to_string_lossy().to_string().replace("\\", "/");
-        println!("config_path {:?}", &self.config_path);
+        // println!("config_path {:?}", &self.config_path);
 
         Ok(())
     }
@@ -107,19 +119,30 @@ impl AocConfig {
 
     pub fn update_default(&mut self) -> io::Result<()> {
         let conf_str = fs::read_to_string(&self.config_path)?;
-        let conf: HashMap<String, serde_json::Value> = toml::from_str(&conf_str).map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Unable to parse default config\n{:?}", e)))?;
+        let conf: HashMap<String, serde_json::Value> = toml::from_str(&conf_str).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Unable to parse default config\n{:?}", e),
+            )
+        })?;
         let binding = "".into();
-        let romfs = conf.get("romfs").unwrap_or(&binding).as_str().unwrap_or_default();
-        
+        let romfs = conf
+            .get("romfs")
+            .unwrap_or(&binding)
+            .as_str()
+            .unwrap_or_default();
+
         if Self::check_if_romfs_valid(romfs) {
             self.romfs = romfs.to_string().replace("\\", "/");
             return Ok(());
         }
-        
-        return Err(io::Error::new(io::ErrorKind::NotFound, "Unable to parse default config"));
+
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Unable to parse default config",
+        ));
     }
 
-    
     pub fn update_from_input(&mut self) -> io::Result<()> {
         let chosen = rfd::FileDialog::new()
             .set_title("Choose Age of Calamity romfs path")
@@ -139,9 +162,6 @@ impl AocConfig {
         Ok(())
     }
 
-   
-
-
     pub fn get_path(&self, pack_local_path: &str) -> Option<PathBuf> {
         //let pack_local_path = format!("Pack/Actor/{}.pack.zs", name);
         let romfs = PathBuf::from(&self.romfs);
@@ -160,17 +180,38 @@ impl AocConfig {
         self.get_path(&format!("asset/{}.rdb", name))
     }
 
-    pub fn get_hashes(&self) -> io::Result<()> {
+    pub fn get_rev_hashes(&mut self) {
+        if self.hashes_rev.is_empty() {
+            for (rdb_name, hashes) in &self.hashes {
+                for hash in hashes {
+                    self.hashes_rev.insert(hash.clone(), rdb_name.clone());
+                }
+            }
+        }
+    }
+
+    pub fn get_hashes(&mut self, force_rebuild: bool) -> io::Result<()> {
         let mut json_path = PathBuf::from(&self.config_path);
         if !json_path.pop() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Config path has no parent"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Config path has no parent",
+            ));
         }
         json_path.push("AOC_hashes.json");
         if json_path.exists() {
-            return Ok(()); //json exists, no need to regenerate
+            if force_rebuild {
+                std::fs::remove_file(&json_path)?;
+            } else {
+                let json_str = fs::read_to_string(&json_path)?;
+                self.hashes = serde_json::from_str(&json_str)?;
+                self.get_rev_hashes();
+                return Ok(());
+            }
         }
+        self.hashes_json_path = json_path.to_string_lossy().to_string().replace("\\", "/");
         println!("Generating cache for AOC hashes, this will be done only once...");
-        let mut data: HashMap<String, Vec<String>> = HashMap::new();
+        // let mut data: HashMap<String, Vec<String>> = HashMap::new();
         let mut rdb_path = PathBuf::from(&self.romfs);
         rdb_path.push("asset");
         for file in std::fs::read_dir(&rdb_path)? {
@@ -179,24 +220,26 @@ impl AocConfig {
                 let mut Hashes: Vec<String> = Vec::new();
                 let rdb = Rdb::open(&p.full_path).expect("Failed to open RDB file");
                 for entry in &rdb.entries {
-                    Hashes.push(format!("{:08x}", entry.file_ktid));
+                    let hash_formatted = format!("{:08x}", entry.file_ktid);
+                    Hashes.push(hash_formatted.clone());
+                    self.hashes_rev.insert(hash_formatted, p.name.clone());
                 }
-                data.insert(p.name.into(), Hashes);
+                self.hashes.insert(p.name.into(), Hashes);
             }
         }
-        serde_json::to_writer(std::fs::File::create(json_path)?, &data)?;
+        serde_json::to_writer(std::fs::File::create(json_path)?, &self.hashes)?;
         Ok(())
     }
-
 
     pub fn save(&self) -> io::Result<()> {
         if self.config_path.is_empty() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Empty config path"));
         }
-        makedirs(&PathBuf::from(&self.config_path))?;   
+        makedirs(&PathBuf::from(&self.config_path))?;
         // let json_str: String = serde_json::to_string_pretty(self)?;
-        let json_data =   self.to_json()?;
-        let toml_str = toml::to_string_pretty(&json_data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:#?}",e)))?;
+        let json_data = self.to_json()?;
+        let toml_str = toml::to_string_pretty(&json_data)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:#?}", e)))?;
         // write_string_to_file(&self.config_path, &json_str)?;
         let mut res = String::new();
         res.push_str("# Age of Calamity rdb tool merging configuration file\n");
@@ -208,31 +251,34 @@ impl AocConfig {
 
     fn try_save_config(&mut self) -> io::Result<bool> {
         if !self.romfs.is_empty() {
-            self.save().map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Unable to save config to:\n{}\n{:?}", &self.config_path, e)))?;
-            self.get_hashes()?;
+            self.save().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Unable to save config to:\n{}\n{:?}", &self.config_path, e),
+                )
+            })?;
+            self.get_hashes(false)?;
             Ok(true)
         } else {
             Ok(false)
         }
     }
-
 }
 
-pub fn makedirs(path: &PathBuf) -> std::io::Result<()> {
-    let par = path.parent();
+pub fn makedirs<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
+    let binding = path.as_ref();
+    let par = Path::new(&binding).parent();
     if let Some(par) = par {
         fs::create_dir_all(par)?;
     }
     Ok(())
 }
 
-
 fn log_error(err_str: &mut String, err: io::Error) {
     let e = format!("{:#?}\n", err);
     println!("{}", &e);
     err_str.push_str(&e);
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Pathlib {
@@ -324,3 +370,12 @@ impl Pathlib {
     }
 }
 
+
+pub fn normalize_path(path: PathBuf) -> PathBuf {
+    let prefix = r"\\?\";
+    if path.to_str().map_or(false, |s| s.starts_with(prefix)) {
+        PathBuf::from(path.to_str().unwrap().trim_start_matches(prefix))
+    } else {
+        path
+    }
+}
