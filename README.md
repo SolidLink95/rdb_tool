@@ -1,22 +1,23 @@
-# rdb_tool
+# Age of Calamity mod merger
 
-Args: rdb_tool.exe InputFilePath OutputFilePath
+This is a fork of [Raytwo's rdb_tool](https://github.com/Raytwo/rdb_tool). It was rewritten as an attempt to create AOC mod merging tool. As of today (25.05.2024) only textures mods are available, so only those were tested.
 
-## Setup
+# Setup and usage
 
-1) Create a directory in the same folder as rdb_tool called data.
-2) Add your files to be patched into the data folder with the syntax: 0xFileHash.file
+1. Follow [this](https://gamebanana.com/tuts/17528#H1_0) tutorial to dump your OWN copy of Age of Calamity
+2. Go to AOC mods directory
+3. Copy the mods to merge there.
+4. Copy the `AOC_mods_merger.exe` there as well.
+5. Either double click on the exe or open AOC mods directory in cmd/powershell terminal and run it by command:
 
-## Usage
+```
+AOC_mods_merger.exe <mods_directory>
+```
+If no `mods_directory` argument is provided then merger will try to work in current directory.
 
-1) Shift-Right-Click on the folder containing rdb_tool.exe and click "Open PowerShell Window Here"
+6. If command succeeds, new folder should be created - `000_AOC_MERGED_MODS`
+7. Run the game and test if everything works
 
-2) Type in .\rdb_tool.exe and press space
+# Credits
 
-3) Add the input path for your rdb to be patched, press space.
-
-4) Add the output path for the patched rdb.
-
-5) Press enter
-
-6) Enjoy your patched rdb.
+- [Raytwo](https://github.com/Raytwo) - original code of rdb_tool
