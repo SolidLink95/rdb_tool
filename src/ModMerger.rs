@@ -5,6 +5,8 @@ use std::{
     process,
     sync::Arc,
 };
+use io::Error as ioErr;
+use io::ErrorKind as ErrKind;
 
 use crate::{
     rdb::{self, Rdb},
@@ -78,24 +80,25 @@ impl ModMerger {
         }
         // println!("{}:{}: aoc_hashes {:?}", file!(), line!(), &self.aoc_hashes);
 
-        for (rdb_name, hashes) in self.aoc_hashes.iter() {
+        for (rdb_name, hashes) in self.aoc_hashes.iter_mut() {
             if !hashes.is_empty() {
                 if let Some(rdb_path) = self.config.get_rdb_path(&rdb_name) {
                     let mut rdb = Rdb::open_io(rdb_path)?;
                     println!("Starting to patch {}", rdb_name);
-                    for aoc_hash in hashes.iter() {
+                    for aoc_hash in hashes.iter_mut() {
                         let filename = &aoc_hash.as_hex_str();
                         let entry_path = PathBuf::from(&aoc_hash.path.full_path);
                         match rdb.get_entry_by_ktid_mut(crate::ktid(filename)) {
                             Some(entry_found) => {
-                                print!("Patching {}... ", filename);
+                                print!("Patching {} ... ", &aoc_hash.path.name);
                                 entry_found.make_external();
                                 entry_found.make_uncompressed();
-                                if let Ok(_) = entry_found.set_external_file(&entry_path) {
+                                if let Ok(_) = entry_found.set_external_file(&aoc_hash) {
                                     println!("Entry converted nicely");
                                 } else {
                                     println!("Entry already converted, skipping");
                                 }
+                                aoc_hash.copy_if_needed()?;
                                 // entry_found
                                 //     .set_external_file(&entry.path())
                                 //     .expect("Failed to set external file");
@@ -215,6 +218,23 @@ impl AocHash {
         }
     }
 
+    pub fn copy_if_needed(&mut self) -> io::Result<()> {
+        if !Path::new(&self.path.full_path).exists() {
+            return Err(ioErr::new(
+                ErrKind::NotFound,
+                format!("File not found: {}", &self.path.full_path),
+            ));
+        }
+        let mut new_path = PathBuf::from(&self.path.full_path);
+        new_path.pop();
+        new_path.push(format!("{}.file", &self.as_hex_str()));
+        if !new_path.exists() {
+            fs::rename(&self.path.full_path, &new_path)?;
+            self.path = Pathlib::new(&new_path);
+        }
+        Ok(())
+    }
+
     pub fn is_valid(&self) -> bool {
         if self.rdb_name.is_none() {
             return false;
@@ -227,7 +247,7 @@ impl AocHash {
 
     pub fn as_u32(&self) -> io::Result<u32> {
         u32::from_str_radix(&self.hash, 16)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid hash"))
+            .map_err(|_| ioErr::new(ErrKind::InvalidData, "Invalid hash"))
     }
 
     pub fn as_hex_str(&self) -> String {

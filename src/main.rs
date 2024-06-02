@@ -2,9 +2,10 @@
 #![allow(non_snake_case, non_camel_case_types)]
 use binread::{io::Cursor, BinRead};
 use binwrite::BinWrite;
+use ModMerger::AocHash;
 mod ModMerger;
 
-use std::{env, io, path::PathBuf};
+use std::{env, io, path::PathBuf, sync::Arc};
 mod AocConfig;
 mod rdb;
 use rdb::Rdb;
@@ -56,6 +57,7 @@ struct Print {
 }
 
 fn patch_rdb(args: &Patch) -> io::Result<()> {
+    let config = Arc::new(AocConfig::AocConfig::safe_new()?);
     let mut rdb =
         Rdb::open(&args.path).expect(&format!("Failed to open RDB file: {:?}", args.path));
 
@@ -139,7 +141,8 @@ fn patch_rdb(args: &Patch) -> io::Result<()> {
                 println!("Patching {}", filename);
                 entry_found.make_external();
                 entry_found.make_uncompressed();
-                if let Ok(_) = entry_found.set_external_file(&entry.path()) {
+                let aoc_hash = AocHash::new(&entry.path(), config.clone());
+                if let Ok(_) = entry_found.set_external_file(&aoc_hash) {
                     println!("{}: set_external_file success", line!());
                 } else {
                     println!("{}: set_external_file failed", line!());

@@ -12,6 +12,8 @@ use binwrite::BinWrite;
 
 use modular_bitfield::prelude::*;
 
+use crate::ModMerger::AocHash;
+
 #[derive(BinRead, BinWrite, Debug)]
 pub struct RdbHeader {
     pub magic: u32,
@@ -90,10 +92,10 @@ impl RdbEntry {
         std::str::from_utf8_mut(self.name.as_mut_slice())
     }
 
-    pub fn set_external_file(&mut self, path: &std::path::Path) -> io::Result<()> {
+    pub fn set_external_file(&mut self, path: &AocHash) -> io::Result<()> {
         let mut name = self.get_name_mut().unwrap_or_default().to_string();
 
-        self.file_size = path.metadata()?.len();
+        self.file_size = Path::new(&path.path.full_path).metadata()?.len();
 
         if let Some(size_marker) = name.find('@') {
             name.replace_range(size_marker.., &format!("@{:x}", self.file_size));
@@ -117,17 +119,16 @@ impl RdbEntry {
         // Ok(())
     }
 
-    pub fn patch_external_file(&mut self, path: &std::path::Path) -> io::Result<()> {
+    pub fn patch_external_file(&mut self, path: &AocHash) -> io::Result<()> {
         self.name = vec![];
         //self.write(&mut bytes).unwrap();
 
         //let cursor : &mut std::io::Cursor<Vec<u8>> = &mut std::io::Cursor::new(Vec::new());
-
         let mut test = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(path)?;
+            .open(&path.path.full_path)?;
 
         //let file = std::fs::read(path).unwrap();
 
@@ -144,7 +145,6 @@ impl RdbEntry {
         }
 
         test.seek(SeekFrom::Start(0))?;
-
         let header_size = match self.entry_type {
             0 => 0x38,
             // 1 is KidsSingletonDb? 4 is G1E
@@ -175,30 +175,32 @@ impl RdbEntry {
         // self.write(&mut writer).unwrap();
         //writer.write_all(&mut reader.buffer());
         // Check if we're dealing with a KTID or an actual filename
-        let filename = if path
-            .file_name()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-            .to_lowercase()
-            .starts_with("0x")
-        {
-            // Strip the extension (Cethleann keeps the extension even if the hash is missing)
-            path.file_stem()
-                .and_then(|x| x.to_str())
-                .expect("Invalid file_stem")
-        } else {
-            // Get the full filename with extension
-            path.file_name()
-                .and_then(|x| x.to_str())
-                .expect("Invalid file_name")
-        };
+        // let filename = if path
+        //     .file_name()
+        //     .unwrap_or_default()
+        //     .to_str()
+        //     .unwrap_or_default()
+        //     .to_lowercase()
+        //     .starts_with("0x")
+        // {
+        //     // Strip the extension (Cethleann keeps the extension even if the hash is missing)
+        //     path.file_stem()
+        //         .and_then(|x| x.to_str())
+        //         .expect("Invalid file_stem")
+        // } else {
+        //     // Get the full filename with extension
+        //     path.file_name()
+        //         .and_then(|x| x.to_str())
+        //         .expect("Invalid file_name")
+        // };
 
-        let out_path = PathBuf::from(format!("./data/0x{}.file", crate::ktid(filename)));
+        // let out_path = PathBuf::from(format!("./data/0x{}.file", crate::ktid(filename)));
+        let mut out_path = PathBuf::from(&path.path.parent);
+        out_path.push(format!("0x{}.file", &path.hash));
 
-        if !out_path.exists() {
-            std::fs::create_dir_all("./data/")?;
-        }
+        // if !out_path.exists() {
+        //     std::fs::create_dir_all("./data/")?;
+        // }
 
         std::fs::write(out_path, &buffer)
     }
