@@ -76,6 +76,7 @@ impl ModMerger {
         //     &self.mods_dirs
         // );
         for mod_dir in self.mods_dirs.clone().iter().rev().cloned() {
+            println!("Processing mod directory: {}", mod_dir.display());
             self.update_aoc_hashes_from_modpath(mod_dir)?;
         }
         // println!("{}:{}: aoc_hashes {:?}", file!(), line!(), &self.aoc_hashes);
@@ -182,6 +183,14 @@ impl ModMerger {
 
     pub fn is_valid_mod_dir<P: AsRef<Path>>(&self, path: P) -> bool {
         let mut p = PathBuf::from(path.as_ref());
+        if let Some(name) = p.file_name() {
+            if name.to_string_lossy().to_string().starts_with("#") {
+                return false;
+            }
+        }
+        if p.parent().unwrap().starts_with("#") {
+            return false;
+        }
         p.push("romfs/asset/data");
         p.exists() && p.is_dir() && std::fs::read_dir(p).is_ok()
     }
