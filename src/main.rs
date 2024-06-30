@@ -2,9 +2,10 @@
 #![allow(non_snake_case, non_camel_case_types)]
 use binread::{io::Cursor, BinRead};
 use binwrite::BinWrite;
+use utils::copy_dirs;
 use ModMerger::AocHash;
 mod ModMerger;
-
+mod utils;
 use std::{env, io, path::PathBuf, sync::Arc};
 mod AocConfig;
 mod rdb;
@@ -162,17 +163,45 @@ fn patch_rdb(args: &Patch) -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
-    // let mut modmerger = ModMerger::ModMerger::new::<PathBuf>(None)?;
+    let matches = clap::Command::new("AOC mods merger")
+        .version("1.0")
+        .about("Merging mods for Age of Calamity")
+        .arg(
+            clap::Arg::new("job_path")
+                .help("Path to directory containing all mods")
+                .required(false)
+                .index(1),
+        )
+        .arg(
+            clap::Arg::new("output")
+                .short('o')
+                .long("output")
+                .help("Optional argument where to copy the merged mod directory")
+                .required(false)
+        )
+        .get_matches();
 
-    let argv = env::args().nth(1).unwrap_or_default(); 
-    let working_dir = if !argv.is_empty() {
-        PathBuf::from(argv)
+    // Optional job path
+    let tmp = "".to_string();
+    let cwd_dir = matches.get_one::<String>("job_path").unwrap_or_else(|| &tmp).to_string();
+    let output_dir = matches.get_one::<String>("output").unwrap_or_else(|| &tmp).to_string();
+    // let argv = env::args().nth(1).unwrap_or_default(); 
+    let working_dir = if !cwd_dir.is_empty() {
+        PathBuf::from(cwd_dir)
     } else {
         env::current_dir()?
     };
     // let p = r"C:\Users\Mati\AppData\Roaming\yuzu\load\01002B00111A2000";
     let mut modmerger = ModMerger::ModMerger::new::<PathBuf>(Some(working_dir))?;
-    modmerger.process_mods()?;
+    if let Err(e) = modmerger.process_mods() {
+        println!("Error: {}", e);
+
+    } else {
+        println!("Done processing mods");
+        if !output_dir.is_empty() {
+            copy_dirs(&modmerger.root_dir.path, &PathBuf::from(output_dir))?;
+        }
+    }
 
 
     // return Ok(());

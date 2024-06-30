@@ -1,3 +1,5 @@
+use io::Error as ioErr;
+use io::ErrorKind as ErrKind;
 use std::{
     collections::HashMap,
     fmt, fs, io,
@@ -5,19 +7,90 @@ use std::{
     process,
     sync::Arc,
 };
-use io::Error as ioErr;
-use io::ErrorKind as ErrKind;
 
 use crate::{
     rdb::{self, Rdb},
+    utils::*,
     AocConfig::{AocConfig, Pathlib},
 };
+
+#[derive(Debug, Clone)]
+pub struct ModDir {
+    pub path: PathBuf,
+    pub rdb_path: PathBuf,
+    pub data_path: PathBuf,
+    pub patch_path: PathBuf,
+    pub add_paths: Vec<PathBuf>,
+}
+
+impl Default for ModDir {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::default(),
+            rdb_path: PathBuf::default(),
+            data_path: PathBuf::default(),
+            patch_path: PathBuf::default(),
+            add_paths: Vec::new(),
+        }
+    }
+}
+
+impl ModDir {
+    pub fn new<P: AsRef<Path>>(path: P, add_paths: Vec<PathBuf>, create_dirs: bool) -> Self {
+        let p = PathBuf::from(path.as_ref());
+        let mut rdb_path = p.clone();
+        rdb_path.push("romfs/asset");
+        let mut data_path = p.clone();
+        data_path.push("romfs/asset/data");
+        let mut patch_path = p.clone();
+        let new_add_paths = Vec::new();
+        patch_path.push("romfs/asset/patch");
+        if create_dirs {
+            create_dir_no_check(&patch_path);
+            create_dir_no_check(&data_path);
+        }
+        for add_path in add_paths.iter() {
+            let mut new_add_path = p.clone();
+            new_add_path.push(add_path);
+            if create_dirs {
+                create_dir_no_check(new_add_path);
+            }
+        }
+        Self {
+            path: p,
+            rdb_path: rdb_path,
+            data_path: data_path,
+            patch_path: patch_path,
+            add_paths: new_add_paths,
+        }
+    }
+    pub fn remove_self_if_exists(&self) -> io::Result<()> {
+        if self.path.exists() {
+            println!("Removing {:?}", &self.path);
+            fs::remove_dir_all(&self.path)?;
+        }
+        Ok(())
+    }
+
+    pub fn create_dirs_all(&self) -> io::Result<()> {
+        print!("Creating directories for {:?}", &self.path);
+        fs::create_dir_all(&self.path)?;
+        fs::create_dir_all(&self.data_path)?;
+        fs::create_dir_all(&self.patch_path)?;
+        for add_path in self.add_paths.iter() {
+            fs::create_dir_all(add_path)?;
+        }
+        Ok(())
+    }
+}
 
 pub struct ModMerger {
     pub config: Arc<AocConfig>,
     pub root_mod_name: String,
-    pub root_dir: String,
-    pub mods_dirs: Vec<PathBuf>,
+    pub cwd_dir: String,
+    pub root_dir: ModDir,
+    pub mods_dirs: Vec<ModDir>,
+    pub add_paths: Vec<String>,
     // pub rdbs: HashMap<String, Rdb>,
     pub aoc_hashes: HashMap<String, Vec<AocHash>>,
 }
@@ -27,15 +100,17 @@ impl ModMerger {
         Ok(Self {
             config: Arc::new(AocConfig::new()?),
             root_mod_name: "000_AOC_MERGED_MODS".to_string(),
+            cwd_dir: Default::default(),
             root_dir: Default::default(),
             mods_dirs: Vec::new(),
+            add_paths: vec!["exefs".to_string(), "romfs/movie_logo".to_string()],
             // rdbs: HashMap::new(),
             aoc_hashes: Default::default(),
         })
     }
-    pub fn new<P: AsRef<Path>>(root_dir: Option<P>) -> io::Result<Self> {
+    pub fn new<P: AsRef<Path>>(cwd_dir: Option<P>) -> io::Result<Self> {
         let mut rdir = String::new();
-        if let Some(p) = root_dir {
+        if let Some(p) = cwd_dir {
             rdir = p.as_ref().to_string_lossy().to_string();
         } else {
             rdir = std::env::current_dir()
@@ -44,41 +119,46 @@ impl ModMerger {
                 .to_string();
         }
         let mut res = Self::new_default()?;
-        res.root_dir = rdir;
+        let mut add_paths = Vec::new();
+        for add_path in res.add_paths.iter() {
+            let mut p = PathBuf::from(&rdir);
+            p.push(add_path);
+            add_paths.push(p);
+        }
+        res.cwd_dir = rdir.clone();
+        res.root_dir = ModDir::new(Path::new(&rdir).join(&res.root_mod_name), add_paths, false);
+        res.root_dir.remove_self_if_exists()?;
+        res.root_dir.create_dirs_all()?;
         // res.get_mods_dirs()?;
-
+        println!("{:#?}\n\n", &res.root_dir);
         Ok(res)
     }
 
     pub fn process_mods(&mut self) -> io::Result<()> {
-        let rdb_dest_dir = self.prepare_master_dir()?;
+        let rdb_dest_dir = self.root_dir.rdb_path.clone();
         // println!("{}:{}: rdb_dest_dir {:?}", file!(), line!(), &rdb_dest_dir);
 
-        for entry in fs::read_dir(&self.root_dir)? {
+        for entry in fs::read_dir(&self.cwd_dir)? {
             let path = Pathlib::new(entry?.path());
             if path.is_dir()
                 && path.name != self.root_mod_name
                 && self.is_valid_mod_dir(&path.full_path)
             {
-                self.mods_dirs.push(PathBuf::from(&path.full_path));
+                self.mods_dirs.push(ModDir::new(&path.full_path, self.root_dir.add_paths.clone(), false));
             }
         }
         self.mods_dirs.sort_by(|a, b| {
-            a.to_string_lossy()
+            a.path.to_string_lossy()
                 .to_lowercase()
-                .cmp(&b.to_string_lossy().to_lowercase())
+                .cmp(&b.path.to_string_lossy().to_lowercase())
         });
-        // println!(
-        //     "{}:{}: mods_dirs (len {}) {:?}",
-        //     file!(),
-        //     line!(),
-        //     &self.mods_dirs.len(),
-        //     &self.mods_dirs
-        // );
+
         for mod_dir in self.mods_dirs.clone().iter().rev().cloned() {
-            println!("Processing mod directory: {}", mod_dir.display());
+            println!("Processing mod directory: {}", mod_dir.path.display());
+            self.copy_add_paths(&mod_dir)?;
             self.update_aoc_hashes_from_modpath(mod_dir)?;
         }
+        println!("\n\n");
         // println!("{}:{}: aoc_hashes {:?}", file!(), line!(), &self.aoc_hashes);
 
         for (rdb_name, hashes) in self.aoc_hashes.iter_mut() {
@@ -86,57 +166,75 @@ impl ModMerger {
                 if let Some(rdb_path) = self.config.get_rdb_path(&rdb_name) {
                     let mut rdb = Rdb::open_io(rdb_path)?;
                     println!("Starting to patch {}", rdb_name);
+                    let mut processed_hashes:Vec<&str> = Vec::new();
                     for aoc_hash in hashes.iter_mut() {
                         let filename = &aoc_hash.as_hex_str();
-                        let entry_path = PathBuf::from(&aoc_hash.path.full_path);
+                        if processed_hashes.contains(&&aoc_hash.hash.as_str()) {
+                            continue;
+                        }
                         match rdb.get_entry_by_ktid_mut(crate::ktid(filename)) {
                             Some(entry_found) => {
                                 print!("Patching {} ... ", &aoc_hash.path.name);
                                 entry_found.make_external();
                                 entry_found.make_uncompressed();
-                                if let Ok(_) = entry_found.set_external_file(&aoc_hash) {
+                                let destpath = self.root_dir.data_path.join(format!("0x{}.file", &aoc_hash.hash));
+                                if let Ok(rawdata) = entry_found.set_external_file(&aoc_hash) {
                                     println!("Entry converted nicely");
+                                    fs::write(&destpath, &rawdata)?;
                                 } else {
-                                    println!("Entry already converted, skipping");
+                                    //assuming the file needs to be copied
+                                    if !destpath.exists() {
+                                        println!("Entry already converted, copying");
+                                        fs::copy(&aoc_hash.path.full_path, &destpath)?;
+                                    }
                                 }
-                                aoc_hash.copy_if_needed()?;
-                                // entry_found
-                                //     .set_external_file(&entry.path())
-                                //     .expect("Failed to set external file");
                             }
                             None => println!("File {} not found in the RDB. Skipping.", filename),
                         }
+                        processed_hashes.push(&aoc_hash.hash);
                     }
-                    let mut rdb_dest_path = rdb_dest_dir.clone();
-                    rdb_dest_path.push(rdb_name);
-                    // println!("{}:{}: saving rdb to  {:?}", file!(), line!(), &rdb_dest_path);
+                    let rdb_dest_path = rdb_dest_dir.join(rdb_name);
                     rdb.save(&rdb_dest_path)?;
                 }
             } else {
                 eprintln!("ERROR: RDB not found for {}", rdb_name);
+            }
+            println!("\n\n");
+        }
+
+        Ok(())
+    }
+
+    pub fn copy_add_paths(&self, mod_dir: &ModDir) ->io::Result<()> {
+        for add_path in self.add_paths.iter() {
+            let source_path = PathBuf::from(&mod_dir.path).join(add_path);
+            if source_path.exists() {
+                let destpath = PathBuf::from(&self.root_dir.path).join(add_path);
+                if !destpath.exists() {
+                    fs::create_dir_all(&destpath)?;
+                }
+                for entry in fs::read_dir(&source_path)? {
+                    let entry = entry?;
+                    let path: PathBuf = entry.path();
+                    if let Some(filename) = path.file_name() {
+                        let dest_file = destpath.join(filename);
+                        fs::copy(&path, &dest_file)?;
+                    } else {
+                        eprintln!("ERROR: Invalid file name: {:?}", path);
+                    
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    pub fn update_aoc_hashes_from_modpath<P: AsRef<Path>>(
+    pub fn update_aoc_hashes_from_modpath(
         &mut self,
-        mod_path: P,
+        mod_path: ModDir,
     ) -> io::Result<()> {
-        // if self.is_valid_mod_dir(&mod_path) {
-        let mut p = PathBuf::from(mod_path.as_ref());
-        p.push("romfs/asset/data");
-        // let files: Vec<AocHash> = fs::read_dir(&p)?
-        //     .filter_map(|x| x.ok())
-        //     .filter(|x| x.path().is_file())
-        //     .map(|x| AocHash::new(x.path(), self.config.clone()))
-        //     .filter(|x| x.is_valid())
-        //     .collect();
-
-        // self.aoc_hashes.extend(files);
-        // }
-        if let Ok(entries) = fs::read_dir(&p) {
+        if let Ok(entries) = fs::read_dir(&mod_path.data_path) {
             for entry in entries {
                 if let Ok(entry) = entry {
                     let path = entry.path();
@@ -149,6 +247,8 @@ impl ModMerger {
                             if let Some(v) = self.aoc_hashes.get_mut(rdb_name) {
                                 v.push(aoc_hash);
                             }
+                        } else {
+                            eprintln!("ERROR: Invalid hash, no rdb found: {:?}", aoc_hash);
                         }
                     }
                 }
@@ -158,19 +258,19 @@ impl ModMerger {
         Ok(())
     }
 
-    pub fn get_mods_dirs(&mut self) -> io::Result<()> {
-        for entry in fs::read_dir(&self.root_dir)? {
-            let path = Pathlib::new(entry?.path());
-            if path.is_dir()
-                && path.name != self.root_mod_name
-                && self.is_valid_mod_dir(&path.full_path)
-            {
-                self.mods_dirs.push(PathBuf::from(&path.full_path));
-            }
-        }
+    // pub fn get_mods_dirs(&mut self) -> io::Result<()> {
+    //     for entry in fs::read_dir(&self.cwd_dir)? {
+    //         let path = Pathlib::new(entry?.path());
+    //         if path.is_dir()
+    //             && path.name != self.root_mod_name
+    //             && self.is_valid_mod_dir(&path.full_path)
+    //         {
+    //             self.mods_dirs.push(PathBuf::from(&path.full_path));
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     pub fn get_rdb_name(&self, hash: &AocHash) -> Option<String> {
         for (rdb_name, hashes) in self.config.hashes.iter() {
@@ -182,7 +282,7 @@ impl ModMerger {
     }
 
     pub fn is_valid_mod_dir<P: AsRef<Path>>(&self, path: P) -> bool {
-        let mut p = PathBuf::from(path.as_ref());
+        let p = PathBuf::from(path.as_ref());
         if let Some(name) = p.file_name() {
             if name.to_string_lossy().to_string().starts_with("#") {
                 return false;
@@ -191,12 +291,11 @@ impl ModMerger {
         if p.parent().unwrap().starts_with("#") {
             return false;
         }
-        p.push("romfs/asset/data");
-        p.exists() && p.is_dir() && std::fs::read_dir(p).is_ok()
+        p.exists() && p.is_dir()
     }
 
     pub fn prepare_master_dir(&mut self) -> io::Result<PathBuf> {
-        let mut p = PathBuf::from(&self.root_dir);
+        let mut p = PathBuf::from(&self.cwd_dir);
         p.push(&self.root_mod_name);
         if p.exists() {
             std::fs::remove_dir_all(&p)?;

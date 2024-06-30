@@ -92,7 +92,7 @@ impl RdbEntry {
         std::str::from_utf8_mut(self.name.as_mut_slice())
     }
 
-    pub fn set_external_file(&mut self, path: &AocHash) -> io::Result<()> {
+    pub fn set_external_file(&mut self, path: &AocHash) -> io::Result<Vec<u8>> {
         let mut name = self.get_name_mut().unwrap_or_default().to_string();
 
         self.file_size = Path::new(&path.path.full_path).metadata()?.len();
@@ -119,7 +119,7 @@ impl RdbEntry {
         // Ok(())
     }
 
-    pub fn patch_external_file(&mut self, path: &AocHash) -> io::Result<()> {
+    pub fn patch_external_file(&mut self, path: &AocHash) -> io::Result<Vec<u8>> {
         self.name = vec![];
         //self.write(&mut bytes).unwrap();
 
@@ -201,8 +201,8 @@ impl RdbEntry {
         // if !out_path.exists() {
         //     std::fs::create_dir_all("./data/")?;
         // }
-
-        std::fs::write(out_path, &buffer)
+        Ok(buffer)
+        // std::fs::write(out_path, &buffer)
     }
 }
 
