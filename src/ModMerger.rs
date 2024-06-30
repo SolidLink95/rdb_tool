@@ -66,14 +66,12 @@ impl ModDir {
     }
     pub fn remove_self_if_exists(&self) -> io::Result<()> {
         if self.path.exists() {
-            println!("Removing {:?}", &self.path);
             fs::remove_dir_all(&self.path)?;
         }
         Ok(())
     }
 
     pub fn create_dirs_all(&self) -> io::Result<()> {
-        print!("Creating directories for {:?}", &self.path);
         fs::create_dir_all(&self.path)?;
         fs::create_dir_all(&self.data_path)?;
         fs::create_dir_all(&self.patch_path)?;
@@ -130,7 +128,6 @@ impl ModMerger {
         res.root_dir.remove_self_if_exists()?;
         res.root_dir.create_dirs_all()?;
         // res.get_mods_dirs()?;
-        println!("{:#?}\n\n", &res.root_dir);
         Ok(res)
     }
 
@@ -152,7 +149,7 @@ impl ModMerger {
                 .to_lowercase()
                 .cmp(&b.path.to_string_lossy().to_lowercase())
         });
-
+        println!("Age Of Calamity Mods Merger 1.0\nMerging {} mods\n\n", self.mods_dirs.len());
         for mod_dir in self.mods_dirs.clone().iter().rev().cloned() {
             println!("Processing mod directory: {}", mod_dir.path.display());
             self.copy_add_paths(&mod_dir)?;
