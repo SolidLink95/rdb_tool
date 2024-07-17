@@ -19,6 +19,7 @@ pub struct ModDir {
     pub path: PathBuf,
     pub rdb_path: PathBuf,
     pub data_path: PathBuf,
+    pub new_data_path: PathBuf,
     pub patch_path: PathBuf,
     pub add_paths: Vec<PathBuf>,
 }
@@ -29,6 +30,7 @@ impl Default for ModDir {
             path: PathBuf::default(),
             rdb_path: PathBuf::default(),
             data_path: PathBuf::default(),
+            new_data_path: PathBuf::default(),
             patch_path: PathBuf::default(),
             add_paths: Vec::new(),
         }
@@ -38,20 +40,21 @@ impl Default for ModDir {
 impl ModDir {
     pub fn new<P: AsRef<Path>>(path: P, add_paths: Vec<PathBuf>, create_dirs: bool) -> Self {
         let p = PathBuf::from(path.as_ref());
-        let mut rdb_path = p.clone();
-        rdb_path.push("romfs/asset");
-        let mut data_path = p.clone();
-        data_path.push("romfs/asset/data");
-        let mut patch_path = p.clone();
+        let mut rdb_path = p.clone().join("romfs/asset");
+        // rdb_path.push("romfs/asset");
+        let mut data_path = p.clone().join("romfs/asset/data");
+        let mut new_data_path = p.clone().join("data");
+        // data_path.push("romfs/asset/data");
+        let mut patch_path = p.clone().join("romfs/asset/patch");
         let new_add_paths = Vec::new();
-        patch_path.push("romfs/asset/patch");
+        // patch_path.push("romfs/asset/patch");
         if create_dirs {
             create_dir_no_check(&patch_path);
             create_dir_no_check(&data_path);
+            create_dir_no_check(&new_data_path);
         }
         for add_path in add_paths.iter() {
-            let mut new_add_path = p.clone();
-            new_add_path.push(add_path);
+            let new_add_path = p.clone().join(add_path);
             if create_dirs {
                 create_dir_no_check(new_add_path);
             }
@@ -60,6 +63,7 @@ impl ModDir {
             path: p,
             rdb_path: rdb_path,
             data_path: data_path,
+            new_data_path: new_data_path,
             patch_path: patch_path,
             add_paths: new_add_paths,
         }
@@ -74,6 +78,7 @@ impl ModDir {
     pub fn create_dirs_all(&self) -> io::Result<()> {
         fs::create_dir_all(&self.path)?;
         fs::create_dir_all(&self.data_path)?;
+        fs::create_dir_all(&self.new_data_path)?;
         fs::create_dir_all(&self.patch_path)?;
         for add_path in self.add_paths.iter() {
             fs::create_dir_all(add_path)?;
@@ -149,9 +154,15 @@ impl ModMerger {
                 .to_lowercase()
                 .cmp(&b.path.to_string_lossy().to_lowercase())
         });
+        if self.mods_dirs.is_empty() {
+            eprintln!("No mods to merge found in the directory: {}", &self.cwd_dir);
+            return Ok(());
+        }
         println!("Age Of Calamity Mods Merger 1.0\nMerging {} mods\n\n", self.mods_dirs.len());
         for mod_dir in self.mods_dirs.clone().iter().rev().cloned() {
-            println!("Processing mod directory: {}", mod_dir.path.display());
+            println!("Processing mod directory: {}", &mod_dir.path.display());
+            fs::create_dir_all(&mod_dir.new_data_path)?;
+            self.copy_from_data_path_to_new_data_path(&mod_dir)?;
             self.copy_add_paths(&mod_dir)?;
             self.update_aoc_hashes_from_modpath(mod_dir)?;
         }
@@ -227,11 +238,38 @@ impl ModMerger {
         Ok(())
     }
 
+    pub fn copy_from_data_path_to_new_data_path(&self, mod_dir: &ModDir) -> io::Result<()> {
+        //Copy from romfs/asset/data to data in order to protect the user from bricking
+        //the game save file by loading raw files
+        if !mod_dir.data_path.exists() {
+            return Ok(());
+        }
+        println!("{}", &mod_dir.data_path.display());
+        for entry in fs::read_dir(&mod_dir.data_path)? {
+            let entry = entry?;
+            let path: PathBuf = entry.path();
+            if path.is_file() && AocHash::new(&path, self.config.clone()).is_valid() {
+                if let Some(filename) = path.file_name() {
+                    let dest_file = mod_dir.new_data_path.join(filename);
+                    if !move_file(&path, &dest_file) {
+                        eprintln!("ERROR: Failed to move file: {:?} -> {}", path, dest_file.display());
+                    }
+                }
+            } else {
+                eprintln!("ERROR: Invalid file name: {:?}", path);
+            }
+        }
+        fs::remove_dir_all(&mod_dir.data_path)?;
+        // create_dir_no_check(&mod_dir.data_path);
+
+        Ok(())
+    }
+
     pub fn update_aoc_hashes_from_modpath(
         &mut self,
         mod_path: ModDir,
     ) -> io::Result<()> {
-        if let Ok(entries) = fs::read_dir(&mod_path.data_path) {
+        if let Ok(entries) = fs::read_dir(&mod_path.new_data_path) {
             for entry in entries {
                 if let Ok(entry) = entry {
                     let path = entry.path();
@@ -345,7 +383,13 @@ impl AocHash {
             return false;
         }
         if self.hash.starts_with("0x") {
+            if self.hash[2..].len() != 8 {
+                return false;
+            }
             return u32::from_str_radix(&self.hash[2..], 16).is_ok();
+        }
+        if self.hash.len() != 8 {
+            return false;
         }
         u32::from_str_radix(&self.hash, 16).is_ok()
     }

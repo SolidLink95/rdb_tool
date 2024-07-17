@@ -1,9 +1,68 @@
 use std::{fs, io};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
+pub fn is_yuzu_dir<P: AsRef<Path>>(path: P) -> bool {
+    let mut p = PathBuf::from(path.as_ref());
+    if !p.is_dir() {
+        return false;
+    }
+    let mut game_id = String::new();
+    let mut yuzu_dir = String::new();
+    let mut load_dir = String::new();
 
+    if let Some(filename) = p.file_name() {
+        game_id = filename.to_str().unwrap_or_default().to_string().to_uppercase();
+    } 
+    if !p.pop() {
+        return false;
+    }
+    if let Some(filename) = p.file_name() {
+        load_dir = filename.to_str().unwrap_or_default().to_string();
+    } 
+    if !p.pop() {
+        return false;
+    }
+    if let Some(filename) = p.file_name() {
+        yuzu_dir = filename.to_str().unwrap_or_default().to_string();
+    } 
+
+
+    return game_id == "01002B00111A2000" && load_dir == "load" && yuzu_dir == "yuzu";
+}
+pub fn is_ryu_dir<P: AsRef<Path>>(path: P) -> bool {
+    let mut p = PathBuf::from(path.as_ref());
+    if !p.is_dir() {
+        return false;
+    }
+    let mut game_id = String::new();
+    let mut ryu_dir = String::new();
+
+    if let Some(filename) = p.file_name() {
+        game_id = filename.to_str().unwrap_or_default().to_string().to_uppercase();
+    } 
+    for _ in 0..3  {
+        if !p.pop() {
+            return false;
+        }
+    }
+    if let Some(filename) = p.file_name() {
+        ryu_dir = filename.to_str().unwrap_or_default().to_string();
+    } 
+
+    return game_id == "01002B00111A2000"  && ryu_dir == "Ryujinx";
+}
+
+pub fn is_emulator_dir<P:AsRef<Path>>(path: P) -> String {
+    if is_yuzu_dir(&path) {
+        return "Yuzu".to_string();
+    }
+    if is_ryu_dir(&path) {
+        return "Ryujinx".to_string();
+    }
+    return String::new();
+}
 
 pub fn create_dir_no_check<P: AsRef<Path>>(path: P) -> bool{
     if path.as_ref().exists() || path.as_ref().is_file() {

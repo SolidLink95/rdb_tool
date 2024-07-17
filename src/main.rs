@@ -6,7 +6,7 @@ use utils::copy_dirs;
 use ModMerger::AocHash;
 mod ModMerger;
 mod utils;
-use std::{env, io, path::PathBuf, sync::Arc};
+use std::{env, io::{self, Read, Stdin}, os::windows::process, path::PathBuf, sync::Arc};
 mod AocConfig;
 mod rdb;
 use rdb::Rdb;
@@ -191,6 +191,18 @@ fn main() -> io::Result<()> {
     } else {
         env::current_dir()?
     };
+    let emulator_name = utils::is_emulator_dir(&working_dir);
+    if !emulator_name.is_empty() {
+        println!("It seems You are trying to work directly inside {} emulator mod directory.", emulator_name);
+        println!("Please change the working directory in order to avoid permanent damage to save game files.");
+        println!("Press any key to exit...");
+        if let Ok(_) = io::stdin().read(&mut [0u8]) {
+            return Ok(());
+        } 
+        std::process::exit(1);
+    } 
+
+
     // let p = r"C:\Users\Mati\AppData\Roaming\yuzu\load\01002B00111A2000";
     let mut modmerger = ModMerger::ModMerger::new::<PathBuf>(Some(working_dir))?;
     if let Err(e) = modmerger.process_mods() {
